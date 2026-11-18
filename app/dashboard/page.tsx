@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -5,9 +6,11 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Bodoni_Moda, Manrope } from "next/font/google";
 import {
-  Hotel, LogOut, MapPin, BedDouble, Users, Calendar, Heart, Star, Utensils,
-  Sparkles, Headphones, ArrowRight, ArrowUpRight, Minus, Plus, X, Tag,
+  Hotel, LogOut, BedDouble, Users, Heart, Utensils,
+  Sparkles, Headphones, ArrowRight, ArrowUpRight, Gem, Minus, Plus, X, Loader2, Tag,
+  Eye, Pencil, Trash2, RefreshCw,
 } from "lucide-react";
+import { apiClient } from "@/lib/api";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { clearTokens } from "@/lib/auth";
 import { CONFIG } from "@/lib/config";
@@ -15,13 +18,11 @@ import { CONFIG } from "@/lib/config";
 const serif = Bodoni_Moda({ subsets: ["latin"], weight: ["400", "500", "600"], style: ["normal", "italic"] });
 const sans = Manrope({ subsets: ["latin"] });
 
-type View = "home" | "hotels" | "destinations" | "offers" | "bookings";
+type View = "home" | "hotels" | "bookings";
 
 const NAV: { label: string; key: View }[] = [
   { label: "Home", key: "home" },
-  { label: "Hotels", key: "hotels" },
-  { label: "Destinations", key: "destinations" },
-  { label: "Offers", key: "offers" },
+  { label: "Rooms", key: "hotels" },
   { label: "My Bookings", key: "bookings" },
 ];
 
@@ -34,43 +35,103 @@ type RoomType = {
   availableRooms?: number;
 };
 
-/* Sample rooms (design preview only, no server needed) */
+type Booking = {
+  reservationId: number;
+  checkInDate: string;
+  checkOutDate: string;
+  numberOfGuests: number;
+  status: string;
+  specialRequest?: string;
+  totalAmount?: number;
+  paymentStatus?: string;
+  rooms: {
+    roomNumber: string;
+    typeName: string;
+    assignedRate: number;
+  }[];
+};
+
 const SAMPLE_ROOMS: RoomType[] = [
-  { roomTypeId: 1, typeName: "Standard Room", description: "Comfortable room with city views and everything you need.", capacity: 2, nightlyRate: 3500 },
-  { roomTypeId: 2, typeName: "Deluxe Room", description: "Spacious room with a king bed and a private balcony.", capacity: 3, nightlyRate: 5800 },
-  { roomTypeId: 3, typeName: "Executive Suite", description: "Separate living area, premium amenities and lounge access.", capacity: 4, nightlyRate: 9800 },
+  {
+    roomTypeId: 1,
+    typeName: "Standard Room",
+    description: "Comfortable room with city views and everything you need.",
+    capacity: 2,
+    nightlyRate: 3500,
+  },
+  {
+    roomTypeId: 2,
+    typeName: "Deluxe Room",
+    description: "Spacious room with a king bed and a private balcony.",
+    capacity: 3,
+    nightlyRate: 5800,
+  },
+  {
+    roomTypeId: 3,
+    typeName: "Executive Suite",
+    description: "Separate living area, premium amenities and lounge access.",
+    capacity: 4,
+    nightlyRate: 9800,
+  },
 ];
 
-const OFFERS = [
-  { code: "STAY3", title: "Stay Longer, Save More", text: "20% off when you stay 3 nights or more.", pct: 20, minNights: 3, img: "/hotel3.jpg" },
-  { code: "WELCOME10", title: "Member Welcome", text: "10% off your next reservation.", pct: 10, minNights: 1, img: "/hotel.jpg" },
-  { code: "GETAWAY15", title: "Weekend Getaway", text: "15% off stays of 2 nights or more.", pct: 15, minNights: 2, img: "/hotel2.jpg" },
-];
 
-const peso = (n: number) => "₱" + Number(n || 0).toLocaleString("en-PH");
+
+const isAuthError = (m: string) =>
+  /unauthor|401|jwt|token|forbidden/i.test(m || "");
+
+const PHOTOS = ["/hotel.jpg", "/hotel2.jpg", "/hotel3.jpg"];
+
+const peso = (n: number) =>
+  "₱" + Number(n || 0).toLocaleString("en-PH");
+
+const fmt = (d: string) =>
+  d
+    ? new Date(d).toLocaleDateString("en-PH", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "";
 
 const inp =
   "h-11 w-full rounded-xl border border-[#e6dcc8] bg-white px-3 text-sm outline-none transition focus:border-[#b8975f] focus:ring-2 focus:ring-[#d4b483]/30";
 
-const DESTINATIONS = [
-  { name: "Naga", sub: "Heritage & Culture", img: "/naga.jpg" },
-  { name: "Manila", sub: "City Elegance", img: "/Manila.jpg" },
-  { name: "Palawan", sub: "Island Serenity", img: "/palawan.jpg" },
-  { name: "Boracay", sub: "Beachfront Bliss", img: "/boracay.jpg" },
-];
+const modalInp =
+  "h-14 w-full rounded-2xl border border-[#e6dcc8] bg-white px-4 text-base outline-none transition placeholder:text-stone-400 focus:border-[#b8975f] focus:ring-2 focus:ring-[#d4b483]/30";
 
-const HOTELS = [
-  { name: "Heritage Grand Hotel", place: "Naga City, Camarines Sur", price: "₱6,800", img: "/hotel.jpg", beds: 2, guests: 4 },
-  { name: "Skyline Hotel", place: "Makati, Manila", price: "₱12,500", img: "/hotel2.jpg", beds: 2, guests: 3 },
-  { name: "Bayview Hotel", place: "Puerto Princesa, Palawan", price: "₱9,800", img: "/hotel3.jpg", beds: 2, guests: 4 },
-  { name: "Oceanfront Hotel", place: "Boracay, Aklan", price: "₱14,300", img: "/hotel.jpg", beds: 2, guests: 4 },
-];
+const statusStyle = (st: string) =>
+  ({
+    CONFIRMED: "bg-emerald-100 text-emerald-800",
+    PENDING: "bg-amber-100 text-amber-800",
+    CANCELLED: "bg-stone-200 text-stone-600",
+    COMPLETED: "bg-sky-100 text-sky-800",
+  } as Record<string, string>)[st?.toUpperCase()] ||
+  "bg-stone-100 text-stone-700";
+
+
 
 const PERKS = [
-  { icon: BedDouble, title: "Luxurious Rooms", text: "Beautifully designed rooms with everything you need." },
-  { icon: Utensils, title: "Fine Dining", text: "Fresh, local ingredients crafted with care." },
-  { icon: Sparkles, title: "Spa & Wellness", text: "Rejuvenating treatments for mind and body." },
-  { icon: Headphones, title: "24/7 Concierge", text: "Personal assistance whenever you need it." },
+  {
+    icon: BedDouble,
+    title: "Luxurious Rooms",
+    text: "Beautifully designed rooms with everything you need.",
+  },
+  {
+    icon: Utensils,
+    title: "Fine Dining",
+    text: "Fresh, local ingredients crafted with care.",
+  },
+  {
+    icon: Sparkles,
+    title: "Spa & Wellness",
+    text: "Rejuvenating treatments for mind and body.",
+  },
+  {
+    icon: Headphones,
+    title: "24/7 Concierge",
+    text: "Personal assistance whenever you need it.",
+  },
 ];
 
 const gold = "text-[#8a6a2f]";
@@ -78,13 +139,13 @@ const gold = "text-[#8a6a2f]";
 const goldBtn =
   "bg-gradient-to-r from-[#ecdcb4] via-[#d4b483] to-[#b8975f] text-stone-900 shadow-md transition hover:brightness-110";
 
-const tile = "rounded-2xl border border-[#e6dcc8] bg-[#fbf8f2]";
+const tile =
+  "rounded-2xl border border-[#e6dcc8] bg-[#fbf8f2]";
 
 export default function DashboardPage() {
   const router = useRouter();
   const { isChecking } = useAuthGuard({ requireAuth: true });
 
-  const [location, setLocation] = useState("Naga");
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [guests, setGuests] = useState(2);
@@ -98,19 +159,36 @@ export default function DashboardPage() {
 
   const nights =
     checkIn && checkOut
-      ? Math.max(0, Math.round((+new Date(checkOut) - +new Date(checkIn)) / 86400000))
+      ? Math.max(
+          0,
+          Math.round(
+            (+new Date(checkOut) - +new Date(checkIn)) / 86400000
+          )
+        )
       : 0;
 
   const canSearch = nights > 0;
 
   const [view, setView] = useState<View>("home");
-  const [heroOk, setHeroOk] = useState(true);
+  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [usingSample, setUsingSample] = useState(false);
+  const [roomsError, setRoomsError] = useState("");
 
-  const roomTypes = SAMPLE_ROOMS;
   const filteredRoomTypes =
     roomTypeFilter === "all"
       ? roomTypes
-      : roomTypes.filter((rt) => String(rt.roomTypeId) === roomTypeFilter);
+      : roomTypes.filter(
+          (rt) => String(rt.roomTypeId) === roomTypeFilter
+        );
+
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsError, setBookingsError] = useState("");
+  const [viewingBooking, setViewingBooking] = useState<Booking | null>(null);
+  const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
+  const [editForm, setEditForm] = useState({ checkInDate: "", checkOutDate: "", numberOfGuests: 2, specialRequest: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const [selected, setSelected] = useState<RoomType | null>(null);
 
@@ -124,14 +202,95 @@ export default function DashboardPage() {
     specialRequest: "",
   });
 
-  const [promo, setPromo] = useState<{ code: string; pct: number; minNights: number } | null>(null);
+  const [promo, setPromo] = useState<{
+    code: string;
+    pct: number;
+    minNights: number;
+  } | null>(null);
+
+  const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
 
+  useEffect(() => {
+    if (view !== "hotels") return;
+
+    let cancelled = false;
+
+    (async () => {
+      setRoomsLoading(true);
+
+      try {
+        const path = canSearch
+          ? `/reservation/room-types/available?checkIn=${checkIn}&checkOut=${checkOut}&guests=${guests}`
+          : "/reservation/room-types";
+
+        const data = await apiClient<RoomType[]>(path, {
+          requiresAuth: true,
+        });
+
+        if (!cancelled) {
+          setRoomTypes(data);
+          setUsingSample(false);
+          setRoomsError("");
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setRoomTypes(SAMPLE_ROOMS);
+          setUsingSample(true);
+          setRoomsError(err?.message || "");
+        }
+      } finally {
+        if (!cancelled) setRoomsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [view, canSearch, checkIn, checkOut, guests]);
+
+  useEffect(() => {
+    if (view !== "bookings") return;
+
+    let cancelled = false;
+
+    (async () => {
+      setBookingsLoading(true);
+      setBookingsError("");
+
+      try {
+        const data = await apiClient<Booking[]>("/reservation/me", {
+          requiresAuth: true,
+        });
+
+        if (!cancelled) {
+          setBookings(data);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setBookingsError(
+            err.message || "Could not load your bookings."
+          );
+        }
+      } finally {
+        if (!cancelled) setBookingsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [view]);
+
   if (isChecking) {
     return (
-      <div className={`${sans.className} flex min-h-screen items-center justify-center bg-[#f3ece0]`}>
-        <p className={`text-xs uppercase tracking-[0.3em] ${gold}`}>Verifying session...</p>
+      <div
+        className={`${sans.className} flex min-h-screen items-center justify-center bg-[#f3ece0]`}
+      >
+        <p className={`text-xs uppercase tracking-[0.3em] ${gold}`}>
+          Verifying session...
+        </p>
       </div>
     );
   }
@@ -145,7 +304,9 @@ export default function DashboardPage() {
   const subtotal = nights * rate;
 
   const discount =
-    promo && nights >= promo.minNights ? Math.round((subtotal * promo.pct) / 100) : 0;
+    promo && nights >= promo.minNights
+      ? Math.round((subtotal * promo.pct) / 100)
+      : 0;
 
   const total = subtotal - discount;
 
@@ -154,105 +315,256 @@ export default function DashboardPage() {
     setSelected(rt);
   };
 
-  // Design preview: the form does not send anything to the server
-  const submitBooking = (e: React.FormEvent) => {
+  const submitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
     if (!canSearch) {
-      return setFormError("Please choose valid check-in and check-out dates.");
+      return setFormError(
+        "Please choose valid check-in and check-out dates."
+      );
     }
+
     if (selected && guests > selected.capacity) {
-      return setFormError(`This room fits up to ${selected.capacity} guests.`);
+      return setFormError(
+        `This room fits up to ${selected.capacity} guests.`
+      );
     }
 
-    setSelected(null);
-    setNotice("Booking is turned off for now. This is a design preview.");
+    setSubmitting(true);
+
+    try {
+      await apiClient("/reservation/book", {
+        method: "POST",
+        requiresAuth: true,
+        body: JSON.stringify({
+          ...form,
+          roomTypeId: selected?.roomTypeId,
+          checkIn,
+          checkOut,
+          numberOfGuests: guests,
+          promoCode: discount > 0 ? promo?.code : undefined,
+        }),
+      });
+
+      setSelected(null);
+
+      setForm({
+        firstName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        address: "",
+        idNumber: "",
+        specialRequest: "",
+      });
+
+      setNotice(
+        "Your reservation was submitted. You can track it here."
+      );
+
+      setView("bookings");
+    } catch (err: any) {
+      setFormError(
+        err.message || "Could not create the reservation."
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const claimOffer = (o: (typeof OFFERS)[number]) => {
-    setPromo({ code: o.code, pct: o.pct, minNights: o.minNights });
-    setNotice(`Offer ${o.code} applied. Choose a room to use it.`);
-    setView("hotels");
+  const cancelBooking = async (id: number) => {
+    if (!window.confirm("Cancel this reservation?")) return;
+
+    try {
+      await apiClient(`/reservation/${id}/cancel`, {
+        method: "PATCH",
+        requiresAuth: true,
+      });
+
+      setBookings((list) =>
+        list.map((b) =>
+          b.reservationId === id
+            ? { ...b, status: "CANCELLED" }
+            : b
+        )
+      );
+
+      setNotice("Reservation cancelled.");
+    } catch (err: any) {
+      setNotice(err.message || "Could not cancel this reservation.");
+    }
   };
 
-  const renderHeader = (onPhoto: boolean) => (
-    <>
-      <header
-        className={`relative z-10 flex items-center justify-between px-6 py-5 sm:px-8 ${
-          onPhoto ? "text-white" : "border-b border-[#e6dcc8]"
-        }`}
+  const refreshBookings = async () => {
+    setBookingsLoading(true);
+    setBookingsError("");
+    try {
+      const data = await apiClient<Booking[]>("/reservation/me", { requiresAuth: true });
+      setBookings(data);
+    } catch (err: any) {
+      setBookingsError(err.message || "Could not load your bookings.");
+    } finally {
+      setBookingsLoading(false);
+    }
+  };
+
+  const openBookingEdit = (booking: Booking) => {
+    setEditingBooking(booking);
+    setEditForm({
+      checkInDate: booking.checkInDate?.slice(0, 10) || "",
+      checkOutDate: booking.checkOutDate?.slice(0, 10) || "",
+      numberOfGuests: Number(booking.numberOfGuests) || 1,
+      specialRequest: booking.specialRequest || "",
+    });
+  };
+
+  const saveBookingEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBooking) return;
+    const editNights = Math.round((new Date(editForm.checkOutDate).getTime() - new Date(editForm.checkInDate).getTime()) / 86400000);
+    if (!editForm.checkInDate || !editForm.checkOutDate || editNights <= 0) {
+      setNotice("Check-out must be after check-in.");
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await apiClient(`/reservation/${editingBooking.reservationId}`, {
+        method: "PUT",
+        requiresAuth: true,
+        body: JSON.stringify({
+          check_in_date: editForm.checkInDate,
+          check_out_date: editForm.checkOutDate,
+          number_of_guests: editForm.numberOfGuests,
+          special_request: editForm.specialRequest,
+        }),
+      });
+      setEditingBooking(null);
+      setNotice("Reservation updated successfully.");
+      await refreshBookings();
+    } catch (err: any) {
+      setNotice(err.message || "Could not update this reservation.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteBooking = async (id: number) => {
+    if (!window.confirm(`Delete reservation #${id}? This action cannot be undone.`)) return;
+    try {
+      await apiClient(`/reservation/${id}`, { method: "DELETE", requiresAuth: true });
+      setBookings((list) => list.filter((b) => b.reservationId !== id));
+      setNotice("Reservation deleted successfully.");
+    } catch (err: any) {
+      setNotice(err.message || "Could not delete this reservation. Check whether related reservation_room or payment records must be deleted first.");
+    }
+  };
+
+
+
+
+const renderHeader = (onPhoto: boolean) => (
+  <>
+    <header
+      className={`relative z-10 flex items-center justify-between px-6 py-5 sm:px-8 ${
+        onPhoto ? "text-white" : "border-b border-[#e6dcc8]"
+      }`}
+    >
+      <button
+        onClick={() => setView("home")}
+        className="flex items-center gap-3"
       >
-        <button onClick={() => setView("home")} className="flex items-center gap-3">
-          <Hotel className={`h-6 w-6 ${onPhoto ? "text-[#ecdcb4]" : gold}`} />
-          <span className={`${serif.className} text-xl tracking-[0.35em]`}>ÉLORIA</span>
-        </button>
+        <Hotel
+          className={`h-6 w-6 ${
+            onPhoto ? "text-[#ecdcb4]" : gold
+          }`}
+        />
+        <span className={`${serif.className} text-xl tracking-[0.35em]`}>
+          ÉLORIA
+        </span>
+      </button>
 
-        <nav className="hidden items-center gap-2 text-xs uppercase tracking-[0.15em] lg:flex">
-          {NAV.map((n) => (
-            <button
-              key={n.key}
-              onClick={() => setView(n.key)}
-              className={`flex h-10 items-center rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.15em] transition ${
-                view === n.key
-                  ? goldBtn
-                  : onPhoto
-                    ? "text-white/90 hover:bg-white/10 hover:text-[#ecdcb4]"
-                    : "text-stone-700 hover:bg-[#f3ece0] hover:text-[#8a6a2f]"
-              }`}
-            >
-              {n.label}
-            </button>
-          ))}
-        </nav>
-
-        <button
-          onClick={handleLogout}
-          className={`flex h-10 items-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.2em] ${goldBtn}`}
-        >
-          <LogOut className="h-4 w-4" />
-          Logout
-        </button>
-      </header>
-
-      <nav
-        className={`relative z-10 flex gap-2 overflow-x-auto px-6 pb-3 text-[11px] uppercase tracking-[0.15em] lg:hidden ${
-          onPhoto ? "text-white" : ""
-        }`}
-      >
+      <nav className="hidden items-center gap-2 text-xs uppercase tracking-[0.15em] lg:flex">
         {NAV.map((n) => (
           <button
             key={n.key}
             onClick={() => setView(n.key)}
-            className={`flex h-9 shrink-0 items-center rounded-full px-4 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+            className={`flex h-10 items-center rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.15em] transition ${
               view === n.key
                 ? goldBtn
                 : onPhoto
-                  ? "text-white/90 hover:bg-white/10"
-                  : "text-stone-700 hover:bg-[#f3ece0]"
+                  ? "text-white/90 hover:bg-white/10 hover:text-[#ecdcb4]"
+                  : "text-stone-700 hover:bg-[#f3ece0] hover:text-[#8a6a2f]"
             }`}
           >
             {n.label}
           </button>
         ))}
       </nav>
-    </>
-  );
 
-  const pageTitle = (eyebrow: string, a: string, b: string, sub?: string) => (
+      <button
+        onClick={handleLogout}
+        className={`flex h-10 items-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.2em] ${goldBtn}`}
+      >
+        <LogOut className="h-4 w-4" />
+        Logout
+      </button>
+    </header>
+
+    <nav
+      className={`relative z-10 flex gap-2 overflow-x-auto px-6 pb-3 text-[11px] uppercase tracking-[0.15em] lg:hidden ${
+        onPhoto ? "text-white" : ""
+      }`}
+    >
+      {NAV.map((n) => (
+        <button
+          key={n.key}
+          onClick={() => setView(n.key)}
+          className={`flex h-9 shrink-0 items-center rounded-full px-4 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+            view === n.key
+              ? goldBtn
+              : onPhoto
+                ? "text-white/90 hover:bg-white/10"
+                : "text-stone-700 hover:bg-[#f3ece0]"
+          }`}
+        >
+          {n.label}
+        </button>
+      ))}
+    </nav>
+  </>
+);
+
+
+  const pageTitle = (
+    eyebrow: string,
+    a: string,
+    b: string,
+    sub?: string
+  ) => (
     <div className="mb-8">
-      <p className={`text-xs font-medium uppercase tracking-[0.3em] ${gold}`}>{eyebrow}</p>
+      <p
+        className={`text-xs font-medium uppercase tracking-[0.3em] ${gold}`}
+      >
+        {eyebrow}
+      </p>
 
       <h1 className={`${serif.className} mt-3 text-4xl sm:text-5xl`}>
         {a} <em className={gold}>{b}</em>
       </h1>
 
-      {sub && <p className="mt-3 max-w-xl text-sm text-stone-600">{sub}</p>}
+      {sub && (
+        <p className="mt-3 max-w-xl text-sm text-stone-600">
+          {sub}
+        </p>
+      )}
     </div>
   );
 
   return (
-    <div className={`${sans.className} min-h-screen w-full bg-[#f3ece0] p-3 sm:p-6 text-stone-900`}>
+    <div
+      className={`${sans.className} min-h-screen w-full bg-[#f3ece0] p-3 sm:p-6 text-stone-900`}
+    >
       <style>{`
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(18px); }
@@ -274,21 +586,14 @@ export default function DashboardPage() {
         {view === "home" ? (
           <>
             <section className="relative flex min-h-[650px] w-full flex-col overflow-hidden rounded-[24px] lg:min-h-[750px]">
-              {/* Fallback background: shows if the photo is missing */}
-              <div className="absolute inset-0 bg-gradient-to-br from-[#1f1812] via-[#3a2d1e] to-[#6b5230]" />
-
-              {heroOk && (
-                <Image
-                  src="/main-picture.jpg"
-                  alt=""
-                  fill
-                  priority
-                  quality={90}
-                  sizes="100vw"
-                  className="object-cover"
-                  onError={() => setHeroOk(false)}
-                />
-              )}
+              <Image
+                src="/hotel4.jpg"
+                alt=""
+                fill
+                priority
+                sizes="100vw"
+                className="object-cover"
+              />
 
               <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-black/25 to-black/10" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/25" />
@@ -318,31 +623,22 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
-            </section>
 
-            <section className="relative z-20 -mt-16 grid grid-cols-2 gap-3 px-3 sm:px-6 lg:grid-cols-4">
-              {DESTINATIONS.map((d, i) => (
-                <div
-                  key={d.name}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setView("hotels")}
-                  className="group relative h-44 cursor-pointer overflow-hidden rounded-2xl border-[3px] border-white shadow-xl shadow-black/10"
-                >
-                  <Image src={d.img} alt="" fill sizes="(min-width: 1024px) 25vw, 50vw" quality={90} loading="eager" className="object-cover transition duration-700 group-hover:scale-110" />
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-
-                  <div className="absolute inset-x-4 bottom-3 flex items-end justify-between text-white">
-                    <div>
-                      <p className={`${serif.className} text-lg leading-tight`}>{d.name}</p>
-                      <p className="text-[10px] uppercase tracking-[0.15em] text-white/80">{d.sub}</p>
-                    </div>
-
-                    <span className={`${serif.className} text-sm text-[#ecdcb4]`}>0{i + 1}</span>
-                  </div>
-                </div>
-              ))}
+              <div className="relative z-10 hidden items-center gap-6 px-10 pb-24 text-xs text-white/90 lg:absolute lg:bottom-0 lg:right-0 lg:flex">
+                {[
+                  [Gem, "Refined"],
+                  [Heart, "Authentic"],
+                  [Sparkles, "Restful"],
+                ].map(([Icon, l]: any) => (
+                  <span
+                    key={l}
+                    className="flex items-center gap-2"
+                  >
+                    <Icon className="h-4 w-4 text-[#ecdcb4]" />
+                    {l}
+                  </span>
+                ))}
+              </div>
             </section>
 
             <div className="space-y-16 px-3 py-14 sm:px-8">
@@ -366,7 +662,13 @@ export default function DashboardPage() {
                 <div className="relative z-10 rounded-2xl border border-[#e6dcc8] bg-[#f6f0e6] p-4 shadow-xl shadow-[#8a6a2f]/15">
                   <div className="flex items-center gap-3">
                     <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg">
-                      <Image src="/hotel3.jpg" alt="" fill sizes="44px" className="object-cover" />
+                      <Image
+                        src="/hotel3.jpg"
+                        alt=""
+                        fill
+                        sizes="44px"
+                        className="object-cover"
+                      />
                     </div>
 
                     <h3 className={`${serif.className} text-lg leading-tight`}>
@@ -376,24 +678,10 @@ export default function DashboardPage() {
 
                   <div className="mt-3 space-y-2">
                     <label className="flex items-center justify-between gap-2 rounded-xl border border-[#e6dcc8] bg-white px-3 py-2">
-                      <span>
-                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">Location</span>
-
-                        <select
-                          value={location}
-                          onChange={(e) => setLocation(e.target.value)}
-                          className="w-full bg-transparent text-sm font-semibold outline-none"
-                        >
-                          {["Naga", "Manila", "Palawan", "Boracay"].map((o) => (
-                            <option key={o}>{o}</option>
-                          ))}
-                        </select>
-                      </span>
-                    </label>
-
-                    <label className="flex items-center justify-between gap-2 rounded-xl border border-[#e6dcc8] bg-white px-3 py-2">
                       <span className="w-full">
-                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">Check-in</span>
+                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                          Check-in
+                        </span>
 
                         <input
                           type="date"
@@ -401,7 +689,9 @@ export default function DashboardPage() {
                           value={checkIn}
                           onChange={(e) => {
                             setCheckIn(e.target.value);
-                            if (checkOut && e.target.value >= checkOut) setCheckOut("");
+                            if (checkOut && e.target.value >= checkOut) {
+                              setCheckOut("");
+                            }
                           }}
                           className="w-full bg-transparent text-sm font-semibold outline-none"
                         />
@@ -410,7 +700,9 @@ export default function DashboardPage() {
 
                     <label className="flex items-center justify-between gap-2 rounded-xl border border-[#e6dcc8] bg-white px-3 py-2">
                       <span className="w-full">
-                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">Check-out</span>
+                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                          Check-out
+                        </span>
 
                         <input
                           type="date"
@@ -424,7 +716,9 @@ export default function DashboardPage() {
 
                     <div className="flex items-center justify-between gap-2 rounded-xl border border-[#e6dcc8] bg-white px-3 py-2">
                       <span>
-                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">Guests</span>
+                        <span className="block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                          Guests
+                        </span>
                         <span className="text-sm font-semibold">
                           {guests} {guests === 1 ? "Guest" : "Guests"}
                         </span>
@@ -454,7 +748,7 @@ export default function DashboardPage() {
 
                   <p className={`mt-3 text-center text-[11px] font-medium ${canSearch ? gold : "text-stone-400"}`}>
                     {canSearch
-                      ? `${nights} ${nights === 1 ? "night" : "nights"} · ${guests} ${guests === 1 ? "guest" : "guests"} · ${location}`
+                      ? `${nights} ${nights === 1 ? "night" : "nights"} · ${guests} ${guests === 1 ? "guest" : "guests"}`
                       : "Select your dates"}
                   </p>
 
@@ -468,18 +762,29 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="relative z-0 h-72 overflow-hidden rounded-3xl shadow-xl shadow-black/10 lg:-ml-10 lg:h-[400px]">
-                  <Image src="/frontdesk.jpg" alt="" fill sizes="(min-width: 1024px) 55vw, 100vw" quality={90} className="object-cover" />
+                  <Image
+                    src="/hotel2.jpg"
+                    alt=""
+                    fill
+                    sizes="55vw"
+                    className="object-cover"
+                  />
                 </div>
               </section>
 
               <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {PERKS.map(({ icon: Icon, title, text }) => (
-                  <div key={title} className={`${tile} flex gap-4 p-5`}>
+                  <div
+                    key={title}
+                    className={`${tile} flex gap-4 p-5`}
+                  >
                     <Icon className={`h-6 w-6 shrink-0 ${gold}`} />
 
                     <div className="flex-1">
                       <p className="text-sm font-semibold">{title}</p>
-                      <p className="mt-1 text-xs leading-relaxed text-stone-600">{text}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-stone-600">
+                        {text}
+                      </p>
                     </div>
 
                     <ArrowUpRight className="h-4 w-4 text-stone-400" />
@@ -487,99 +792,6 @@ export default function DashboardPage() {
                 ))}
               </section>
 
-              <section>
-                <div className="mb-6 flex items-end justify-between">
-                  <h2 className={`${serif.className} text-3xl`}>
-                    Featured <em className={gold}>Stays</em>
-                  </h2>
-
-                  <button onClick={() => setView("hotels")} className={`flex items-center gap-1 text-sm ${gold}`}>
-                    View all
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {HOTELS.map((h) => (
-                    <article
-                      key={h.name}
-                      className="group overflow-hidden rounded-2xl border border-[#e6dcc8] bg-white transition hover:-translate-y-1 hover:shadow-xl hover:shadow-[#8a6a2f]/15"
-                    >
-                      <div className="relative h-44">
-                        <Image src={h.img} alt="" fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" quality={90} className="object-cover transition duration-700 group-hover:scale-105" />
-
-                        <button
-                          aria-label="Save"
-                          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/90"
-                        >
-                          <Heart className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div className="p-4">
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="text-sm font-semibold">{h.name}</h3>
-                          <span className={`${serif.className} text-lg ${gold}`}>{h.price}</span>
-                        </div>
-
-                        <p className="mt-1 flex items-center gap-1 text-xs text-stone-500">
-                          <MapPin className="h-3 w-3" />
-                          {h.place}
-                        </p>
-
-                        <div className="mt-3 flex items-center justify-between border-t border-[#efe6d4] pt-3 text-xs text-stone-600">
-                          <span className="flex items-center gap-1">
-                            <BedDouble className="h-3.5 w-3.5" />
-                            {h.beds} Beds
-                          </span>
-
-                          <span className="flex items-center gap-1">
-                            <Users className="h-3.5 w-3.5" />
-                            {h.guests} Guests
-                          </span>
-
-                          <span className="flex items-center gap-1">
-                            <Star className="h-3.5 w-3.5 fill-[#d4b483] text-[#d4b483]" />
-                            4.9
-                          </span>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-
-              <section className="grid overflow-hidden rounded-3xl bg-[#f6f0e6] ring-1 ring-[#d4b483]/50 md:grid-cols-[1.1fr_1fr]">
-                <div className="relative h-56 md:h-auto">
-                  <Image src="/hotel3.jpg" alt="" fill sizes="(min-width: 768px) 50vw, 100vw" quality={90} className="object-cover" />
-                </div>
-
-                <div className="p-8 sm:p-10">
-                  <p className={`text-[11px] font-medium uppercase tracking-[0.3em] ${gold}`}>Special Offer</p>
-
-                  <h2 className={`${serif.className} mt-3 text-4xl leading-tight`}>
-                    Stay Longer,
-                    <br />
-                    <em className={gold}>Save More</em>
-                  </h2>
-
-                  <p className="mt-3 text-sm text-stone-600">
-                    Enjoy up to 20% off when you stay 3 nights or more.
-                  </p>
-
-                  <button
-                    onClick={() => setView("offers")}
-                    className={`mt-6 h-11 rounded-full px-7 text-[11px] font-semibold uppercase tracking-[0.2em] ${goldBtn}`}
-                  >
-                    View Offers
-                  </button>
-                </div>
-              </section>
-
-              <footer className="flex flex-col justify-between gap-2 border-t border-[#e6dcc8] pt-6 text-xs text-stone-500 sm:flex-row">
-                <span>© 2026 ÉLORIA. All rights reserved.</span>
-                <span>The Art of Exceptional Stays</span>
-              </footer>
             </div>
           </>
         ) : (
@@ -590,7 +802,10 @@ export default function DashboardPage() {
               {notice && (
                 <div className="mb-6 flex items-center justify-between rounded-2xl border border-[#d4b483] bg-[#d4b483]/15 px-4 py-3 text-sm">
                   <span>{notice}</span>
-                  <button onClick={() => setNotice("")} aria-label="Dismiss">
+                  <button
+                    onClick={() => setNotice("")}
+                    aria-label="Dismiss"
+                  >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -598,11 +813,18 @@ export default function DashboardPage() {
 
               {view === "hotels" && (
                 <div>
-                  {pageTitle("Rooms & Suites", "Find Your", "Perfect Room", "Pick your dates to see what is available.")}
+                  {pageTitle(
+                    "Rooms & Suites",
+                    "Find Your",
+                    "Perfect Room",
+                    "Pick your dates to see what is available."
+                  )}
 
                   <div className="mb-8 grid gap-3 rounded-2xl border border-[#e6dcc8] bg-[#fbf8f2] p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_0.7fr_1fr_auto]">
                     <label>
-                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Check-in</span>
+                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                        Check-in
+                      </span>
                       <input
                         type="date"
                         min={today || undefined}
@@ -610,13 +832,17 @@ export default function DashboardPage() {
                         className={inp}
                         onChange={(e) => {
                           setCheckIn(e.target.value);
-                          if (checkOut && e.target.value >= checkOut) setCheckOut("");
+                          if (checkOut && e.target.value >= checkOut) {
+                            setCheckOut("");
+                          }
                         }}
                       />
                     </label>
 
                     <label>
-                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Check-out</span>
+                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                        Check-out
+                      </span>
                       <input
                         type="date"
                         min={checkIn || today || undefined}
@@ -627,19 +853,25 @@ export default function DashboardPage() {
                     </label>
 
                     <label>
-                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Guests</span>
+                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                        Guests
+                      </span>
                       <input
                         type="number"
                         min={1}
                         max={10}
                         value={guests}
                         className={inp}
-                        onChange={(e) => setGuests(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={(e) =>
+                          setGuests(Math.max(1, Number(e.target.value) || 1))
+                        }
                       />
                     </label>
 
                     <label>
-                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Room Options</span>
+                      <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                        Room Options
+                      </span>
 
                       <select
                         value={roomTypeFilter}
@@ -649,7 +881,10 @@ export default function DashboardPage() {
                         <option value="all">All Room Types</option>
 
                         {roomTypes.map((rt) => (
-                          <option key={rt.roomTypeId} value={String(rt.roomTypeId)}>
+                          <option
+                            key={rt.roomTypeId}
+                            value={String(rt.roomTypeId)}
+                          >
                             {rt.typeName}
                           </option>
                         ))}
@@ -675,51 +910,86 @@ export default function DashboardPage() {
                     <p className="mb-4 flex items-center gap-2 text-sm">
                       <Tag className={`h-4 w-4 ${gold}`} />
                       Offer <b>{promo.code}</b> ({promo.pct}% off, {promo.minNights}+ nights)
-                      <button onClick={() => setPromo(null)} className="text-xs text-stone-500 underline">
+                      <button
+                        onClick={() => setPromo(null)}
+                        className="text-xs text-stone-500 underline"
+                      >
                         remove
                       </button>
                     </p>
                   )}
 
-                  {filteredRoomTypes.length === 0 ? (
-                    <p className="text-sm text-stone-500">No rooms found for the selected room type.</p>
+                  {usingSample && (
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                      <span>
+                        {isAuthError(roomsError)
+                          ? "Your session is not valid or has expired, so sample rooms are shown. Please log in again."
+                          : `Could not load rooms${roomsError ? ` (${roomsError})` : ""}. Sample rooms are shown, so booking will not work.`}
+                      </span>
+
+                      {isAuthError(roomsError) && (
+                        <button
+                          onClick={handleLogout}
+                          className="rounded-full border border-amber-400 px-3 py-1 font-semibold"
+                        >
+                          Log in again
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {roomsLoading ? (
+                    <p className="flex items-center gap-2 text-sm text-stone-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading rooms...
+                    </p>
+                  ) : filteredRoomTypes.length === 0 ? (
+                    <p className="text-sm text-stone-500">
+                      {roomTypes.length === 0
+                        ? "No rooms available for these dates."
+                        : "No rooms found for the selected room type."}
+                    </p>
                   ) : (
                     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                      {filteredRoomTypes.map((rt) => (
+                      {filteredRoomTypes.map((rt, i) => (
                         <article
                           key={rt.roomTypeId}
                           className="overflow-hidden rounded-2xl border border-[#e6dcc8] bg-white transition hover:-translate-y-1 hover:shadow-xl hover:shadow-[#8a6a2f]/15"
                         >
                           <div className="relative h-48">
                             <Image
-                              src={
-                                rt.typeName === "Standard Room"
-                                  ? "/standard.jpg"
-                                  : rt.typeName === "Deluxe Room"
-                                    ? "/deluxe.jpg"
-                                    : rt.typeName === "Executive Suite"
-                                      ? "/executive.jpg"
-                                      : "/hotel.jpg"
-                              }
-                              alt={rt.typeName}
-                              fill
-                              sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-                              quality={90}
-                              className="object-cover"
-                            />
-                          </div>
-
+                                src={
+                                 rt.typeName === "Standard Room"
+                                   ? "/standard.jpg"
+                                   : rt.typeName === "Deluxe Room"
+                                     ? "/deluxe.jpg"
+                                     : rt.typeName === "Executive Suite"
+                                       ? "/executive.jpg"
+                                       : "/hotel.jpg"
+                                }
+                                alt={rt.typeName}
+                                fill
+                                sizes="33vw"
+                                className="object-cover"
+                                />
+                            </div>
                           <div className="p-5">
                             <div className="flex items-start justify-between gap-3">
-                              <h3 className={`${serif.className} text-xl`}>{rt.typeName}</h3>
+                              <h3 className={`${serif.className} text-xl`}>
+                                {rt.typeName}
+                              </h3>
 
                               <span className={`${serif.className} text-lg ${gold}`}>
                                 {peso(rt.nightlyRate)}
-                                <span className="text-[10px] text-stone-500"> /night</span>
+                                <span className="text-[10px] text-stone-500">
+                                  {" "}/night
+                                </span>
                               </span>
                             </div>
 
-                            <p className="mt-2 text-sm text-stone-600">{rt.description}</p>
+                            <p className="mt-2 text-sm text-stone-600">
+                              {rt.description}
+                            </p>
 
                             <div className="mt-3 flex gap-4 text-xs text-stone-600">
                               <span className="flex items-center gap-1">
@@ -740,7 +1010,9 @@ export default function DashboardPage() {
                               disabled={rt.availableRooms === 0}
                               className={`mt-4 h-11 w-full rounded-full text-[11px] font-semibold uppercase tracking-[0.2em] ${goldBtn} disabled:cursor-not-allowed disabled:opacity-50`}
                             >
-                              {rt.availableRooms === 0 ? "Sold out" : "Book this room"}
+                              {rt.availableRooms === 0
+                                ? "Sold out"
+                                : "Book this room"}
                             </button>
                           </div>
                         </article>
@@ -750,93 +1022,112 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {view === "destinations" && (
-                <div>
-                  {pageTitle("Where to next", "Our", "Destinations", "Choose a destination to start planning your stay.")}
-
-                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                    {DESTINATIONS.map((d) => (
-                      <button
-                        key={d.name}
-                        onClick={() => setView("hotels")}
-                        className="group relative h-72 overflow-hidden rounded-2xl text-left"
-                      >
-                        <Image src={d.img} alt="" fill sizes="(min-width: 1024px) 25vw, 50vw" quality={90} className="object-cover transition duration-700 group-hover:scale-110" />
-
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent" />
-
-                        <div className="absolute inset-x-4 bottom-4 text-white">
-                          <p className={`${serif.className} text-2xl`}>{d.name}</p>
-                          <p className="text-[10px] uppercase tracking-[0.15em] text-white/80">{d.sub}</p>
-                          <span className="mt-3 inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.2em] text-[#ecdcb4]">
-                            Book a stay
-                            <ArrowRight className="h-3.5 w-3.5" />
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {view === "offers" && (
-                <div>
-                  {pageTitle(
-                    "Member perks",
-                    "Special",
-                    "Offers",
-                    "Claim an offer, then choose your room. Discounts apply automatically at booking."
-                  )}
-
-                  <div className="grid gap-5 md:grid-cols-3">
-                    {OFFERS.map((o) => (
-                      <article key={o.code} className="overflow-hidden rounded-2xl border border-[#e6dcc8] bg-[#fbf8f2]">
-                        <div className="relative h-40">
-                          <Image src={o.img} alt="" fill sizes="(min-width: 768px) 33vw, 100vw" quality={90} className="object-cover" />
-                        </div>
-
-                        <div className="p-5">
-                          <p className={`text-[10px] font-semibold uppercase tracking-[0.3em] ${gold}`}>Code {o.code}</p>
-
-                          <h3 className={`${serif.className} mt-2 text-2xl`}>{o.title}</h3>
-
-                          <p className="mt-2 text-sm text-stone-600">{o.text}</p>
-
-                          <button
-                            onClick={() => claimOffer(o)}
-                            className={`mt-5 h-11 w-full rounded-full text-[11px] font-semibold uppercase tracking-[0.2em] ${goldBtn}`}
-                          >
-                            Claim offer
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {view === "bookings" && (
                 <div>
-                  {pageTitle("Your reservations", "My", "Bookings")}
-
-                  <div className="rounded-2xl border border-dashed border-[#d4b483] p-10 text-center">
-                    <p className={`${serif.className} text-2xl`}>No bookings yet</p>
-
-                    <p className="mt-2 text-sm text-stone-600">Your reservations will appear here.</p>
-
-                    <button
-                      onClick={() => setView("hotels")}
-                      className={`mt-5 h-11 rounded-full px-7 text-[11px] font-semibold uppercase tracking-[0.2em] ${goldBtn}`}
-                    >
-                      Browse rooms
+                  <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+                    <div>
+                      <p className={`text-xs font-medium uppercase tracking-[0.3em] ${gold}`}>Reservation Management</p>
+                      <h1 className={`${serif.className} mt-2 text-4xl sm:text-5xl`}>My <em className={gold}>Bookings</em></h1>
+                      <p className="mt-2 text-sm text-stone-600">View, update, and manage your reservations.</p>
+                    </div>
+                    <button onClick={refreshBookings} disabled={bookingsLoading} className="flex h-10 items-center gap-2 rounded-full border border-[#e6dcc8] px-4 text-xs text-stone-600 transition hover:bg-[#fbf8f2] disabled:opacity-50">
+                      <RefreshCw className={`h-3.5 w-3.5 ${bookingsLoading ? "animate-spin" : ""}`} /> Refresh
                     </button>
                   </div>
+
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eee7db] bg-[#fdfbf7] px-5 py-4">
+                    <div>
+                      <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-stone-500">Total Reservations</p>
+                      <p className={`${serif.className} mt-1 text-3xl ${gold}`}>{bookings.length}</p>
+                    </div>
+                    <button onClick={() => setView("hotels")} className={`flex h-10 items-center gap-2 rounded-full px-5 text-[10px] font-semibold uppercase tracking-[0.15em] ${goldBtn}`}>
+                      <Plus className="h-3.5 w-3.5" /> New Booking
+                    </button>
+                  </div>
+
+                  {bookingsError ? (
+                    <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{isAuthError(bookingsError) ? "Your session has expired. Please log in again." : bookingsError}</div>
+                  ) : bookingsLoading && bookings.length === 0 ? (
+                    <p className="flex items-center gap-2 py-6 text-sm text-stone-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading your bookings...</p>
+                  ) : bookings.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[#d4b483] p-10 text-center">
+                      <p className={`${serif.className} text-2xl`}>No bookings yet</p>
+                      <p className="mt-2 text-sm text-stone-600">Your reservations will appear here.</p>
+                      <button onClick={() => setView("hotels")} className={`mt-5 h-10 rounded-full px-6 text-[10px] font-semibold uppercase tracking-[0.15em] ${goldBtn}`}>Browse rooms</button>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-[#eee7db] bg-white">
+                      <table className="w-full min-w-[850px] border-collapse text-left text-xs">
+                        <thead className="bg-[#fbf9f4] text-[9px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                          <tr>
+                            <th className="px-4 py-4">ID</th><th className="px-4 py-4">Room</th><th className="px-4 py-4">Check-in</th><th className="px-4 py-4">Check-out</th><th className="px-4 py-4">Guests</th><th className="px-4 py-4">Status</th><th className="px-4 py-4 text-center">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bookings.map((b) => (
+                            <tr key={b.reservationId} className="border-t border-[#f0eadf] text-stone-600 hover:bg-[#fdfbf7]">
+                              <td className="px-4 py-4 font-medium text-stone-700">#{b.reservationId}</td>
+                              <td className="px-4 py-4">{b.rooms?.[0]?.typeName || "Room"}</td>
+                              <td className="px-4 py-4">{fmt(b.checkInDate)}</td>
+                              <td className="px-4 py-4">{fmt(b.checkOutDate)}</td>
+                              <td className="px-4 py-4">{b.numberOfGuests}</td>
+                              <td className="px-4 py-4"><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide ${statusStyle(b.status)}`}>{b.status}</span></td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button title="View reservation" aria-label="View reservation" onClick={() => setViewingBooking(b)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#e6dcc8] text-stone-600 hover:bg-[#f5efe4]"><Eye className="h-3.5 w-3.5" /></button>
+                                  <button title="Edit reservation" aria-label="Edit reservation" onClick={() => openBookingEdit(b)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#e6dcc8] text-stone-600 hover:bg-[#f5efe4]"><Pencil className="h-3.5 w-3.5" /></button>
+                                  <button title="Delete reservation" aria-label="Delete reservation" onClick={() => deleteBooking(b.reservationId)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#e6dcc8] text-red-500 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="border-t border-[#f0eadf] px-4 py-3 text-[10px] text-stone-500">Use View to view a reservation, Update to edit its details, and Delete to permanently remove it.</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </>
         )}
       </div>
+
+      {viewingBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={() => setViewingBooking(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between">
+              <div><p className={`text-[10px] uppercase tracking-[0.25em] ${gold}`}>Reservation Details</p><h2 className={`${serif.className} mt-1 text-3xl`}>Booking #{viewingBooking.reservationId}</h2></div>
+              <button onClick={() => setViewingBooking(null)} aria-label="Close"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="mt-5 space-y-3 text-sm">
+              <div className="flex justify-between"><span className="text-stone-500">Room</span><b>{viewingBooking.rooms?.[0]?.typeName || "Room"}</b></div>
+              <div className="flex justify-between"><span className="text-stone-500">Check-in</span><b>{fmt(viewingBooking.checkInDate)}</b></div>
+              <div className="flex justify-between"><span className="text-stone-500">Check-out</span><b>{fmt(viewingBooking.checkOutDate)}</b></div>
+              <div className="flex justify-between"><span className="text-stone-500">Guests</span><b>{viewingBooking.numberOfGuests}</b></div>
+              <div className="flex justify-between"><span className="text-stone-500">Status</span><b>{viewingBooking.status}</b></div>
+              <div className="flex justify-between"><span className="text-stone-500">Payment</span><b>{viewingBooking.paymentStatus || "UNPAID"}</b></div>
+              <div><p className="text-stone-500">Special request</p><p className="mt-1">{viewingBooking.specialRequest || "None"}</p></div>
+              <div className="flex justify-between border-t border-[#eee7db] pt-3"><span className="text-stone-500">Total</span><b className={gold}>{peso(viewingBooking.totalAmount || 0)}</b></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={() => !savingEdit && setEditingBooking(null)}>
+          <form onSubmit={saveBookingEdit} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between"><div><p className={`text-[10px] uppercase tracking-[0.25em] ${gold}`}>Reservation Management</p><h2 className={`${serif.className} mt-1 text-3xl`}>Edit Booking</h2></div><button type="button" onClick={() => setEditingBooking(null)} aria-label="Close"><X className="h-5 w-5" /></button></div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <label><span className="mb-1 block text-[10px] uppercase tracking-[0.15em] text-stone-500">Check-in</span><input required type="date" min={today || undefined} value={editForm.checkInDate} onChange={(e) => setEditForm({ ...editForm, checkInDate: e.target.value })} className={modalInp} /></label>
+              <label><span className="mb-1 block text-[10px] uppercase tracking-[0.15em] text-stone-500">Check-out</span><input required type="date" min={editForm.checkInDate || today || undefined} value={editForm.checkOutDate} onChange={(e) => setEditForm({ ...editForm, checkOutDate: e.target.value })} className={modalInp} /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-[10px] uppercase tracking-[0.15em] text-stone-500">Guests</span><input required type="number" min={1} max={10} value={editForm.numberOfGuests} onChange={(e) => setEditForm({ ...editForm, numberOfGuests: Math.max(1, Number(e.target.value) || 1) })} className={modalInp} /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-[10px] uppercase tracking-[0.15em] text-stone-500">Special request</span><textarea value={editForm.specialRequest} onChange={(e) => setEditForm({ ...editForm, specialRequest: e.target.value })} className={`${modalInp} h-24 py-3`} placeholder="Optional request" /></label>
+            </div>
+            <button type="submit" disabled={savingEdit} className={`mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-xs font-semibold uppercase tracking-[0.15em] ${goldBtn}`}>{savingEdit ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : "Save Changes"}</button>
+          </form>
+        </div>
+      )}
 
       {selected && (
         <div
@@ -846,52 +1137,68 @@ export default function DashboardPage() {
           <form
             onSubmit={submitBooking}
             onClick={(e) => e.stopPropagation()}
-            className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-8"
+            className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[28px] bg-white p-7 shadow-2xl sm:p-10"
           >
             <div className="flex items-start justify-between">
               <div>
-                <p className={`text-[10px] font-semibold uppercase tracking-[0.3em] ${gold}`}>Reserve</p>
+                <p className={`text-[10px] font-semibold uppercase tracking-[0.3em] ${gold}`}>
+                  Reserve
+                </p>
 
-                <h2 className={`${serif.className} mt-1 text-3xl`}>{selected.typeName}</h2>
+                <h2 className={`${serif.className} mt-1 text-4xl`}>
+                  {selected.typeName}
+                </h2>
               </div>
 
-              <button type="button" onClick={() => setSelected(null)} aria-label="Close">
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                aria-label="Close"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <div className="mt-5 grid grid-cols-3 gap-3">
               <label className="col-span-1">
-                <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Check-in</span>
+                <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                  Check-in
+                </span>
 
                 <input
                   type="date"
                   required
                   min={today || undefined}
                   value={checkIn}
-                  className={inp}
+                  className={modalInp}
                   onChange={(e) => {
                     setCheckIn(e.target.value);
-                    if (checkOut && e.target.value >= checkOut) setCheckOut("");
+                    if (checkOut && e.target.value >= checkOut) {
+                      setCheckOut("");
+                    }
                   }}
                 />
               </label>
 
               <label className="col-span-1">
-                <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Check-out</span>
+                <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                  Check-out
+                </span>
 
                 <input
                   type="date"
                   required
                   min={checkIn || today || undefined}
                   value={checkOut}
-                  className={inp}
+                  className={modalInp}
                   onChange={(e) => setCheckOut(e.target.value)}
                 />
               </label>
 
               <label className="col-span-1">
-                <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">Guests</span>
+                <span className="mb-1 block text-[9px] uppercase tracking-[0.2em] text-stone-500">
+                  Guests
+                </span>
 
                 <input
                   type="number"
@@ -899,8 +1206,10 @@ export default function DashboardPage() {
                   min={1}
                   max={selected.capacity}
                   value={guests}
-                  className={inp}
-                  onChange={(e) => setGuests(Math.max(1, Number(e.target.value) || 1))}
+                  className={modalInp}
+                  onChange={(e) =>
+                    setGuests(Math.max(1, Number(e.target.value) || 1))
+                  }
                 />
               </label>
             </div>
@@ -910,16 +1219,20 @@ export default function DashboardPage() {
                 required
                 placeholder="First name"
                 value={form.firstName}
-                onChange={(e) => setForm({ ...form, firstName: e.target.value })}
-                className={inp}
+                onChange={(e) =>
+                  setForm({ ...form, firstName: e.target.value })
+                }
+                className={modalInp}
               />
 
               <input
                 required
                 placeholder="Last name"
                 value={form.lastName}
-                onChange={(e) => setForm({ ...form, lastName: e.target.value })}
-                className={inp}
+                onChange={(e) =>
+                  setForm({ ...form, lastName: e.target.value })
+                }
+                className={modalInp}
               />
 
               <input
@@ -927,44 +1240,55 @@ export default function DashboardPage() {
                 type="email"
                 placeholder="Email"
                 value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                className={inp}
+                onChange={(e) =>
+                  setForm({ ...form, email: e.target.value })
+                }
+                className={modalInp}
               />
 
               <input
                 required
                 placeholder="Phone"
                 value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                className={inp}
+                onChange={(e) =>
+                  setForm({ ...form, phone: e.target.value })
+                }
+                className={modalInp}
               />
 
               <input
                 placeholder="Address (optional)"
                 value={form.address}
-                onChange={(e) => setForm({ ...form, address: e.target.value })}
-                className={`${inp} sm:col-span-2`}
+                onChange={(e) =>
+                  setForm({ ...form, address: e.target.value })
+                }
+                className={`${modalInp} sm:col-span-2`}
               />
 
               <input
                 placeholder="ID number (optional)"
                 value={form.idNumber}
-                onChange={(e) => setForm({ ...form, idNumber: e.target.value })}
-                className={`${inp} sm:col-span-2`}
+                onChange={(e) =>
+                  setForm({ ...form, idNumber: e.target.value })
+                }
+                className={`${modalInp} sm:col-span-2`}
               />
 
               <textarea
                 placeholder="Special request (optional)"
                 value={form.specialRequest}
-                onChange={(e) => setForm({ ...form, specialRequest: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, specialRequest: e.target.value })
+                }
                 className={`${inp} h-20 py-2 sm:col-span-2`}
               />
             </div>
 
-            <div className="mt-5 space-y-1 rounded-2xl bg-[#fbf8f2] p-4 text-sm">
+            <div className="mt-6 space-y-2 rounded-3xl bg-[#fbf8f2] p-5 text-sm">
               <div className="flex justify-between">
                 <span>
-                  {peso(rate)} × {nights} {nights === 1 ? "night" : "nights"}
+                  {peso(rate)} × {nights}{" "}
+                  {nights === 1 ? "night" : "nights"}
                 </span>
                 <span>{peso(subtotal)}</span>
               </div>
@@ -976,22 +1300,31 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              <div className={`flex justify-between border-t border-[#e6dcc8] pt-2 ${serif.className} text-xl ${gold}`}>
+              <div className={`flex justify-between border-t border-[#e6dcc8] pt-3 ${serif.className} text-2xl ${gold}`}>
                 <span>Total</span>
                 <span>{peso(total)}</span>
               </div>
             </div>
 
             {formError && (
-              <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>
+              <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+                {formError}
+              </p>
             )}
 
             <button
               type="submit"
-              disabled={!canSearch}
-              className={`mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full text-xs font-semibold uppercase tracking-[0.2em] ${goldBtn} disabled:cursor-not-allowed disabled:opacity-50`}
+              disabled={submitting || !canSearch}
+              className={`mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-full text-xs font-semibold uppercase tracking-[0.2em] ${goldBtn} disabled:cursor-not-allowed disabled:opacity-50`}
             >
-              Confirm reservation
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                "Confirm reservation"
+              )}
             </button>
           </form>
         </div>
